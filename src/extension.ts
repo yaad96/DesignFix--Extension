@@ -16,6 +16,9 @@ import { diffChunks, DiffChunk } from './FollowAndAuthorRulesProcessor';
 
 //const readFileAsync = promisify(fs.readFile);
 
+// EventEmitter to trigger CodeLens refresh (exported for use in other modules)
+export const codeLensChangeEmitter = new vscode.EventEmitter<void>();
+
 const port = 8887;
 let activeWebSocket: WebSocket.WebSocket | null = null;
 
@@ -238,6 +241,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.languages.registerCodeLensProvider(
             { language: 'java', scheme: 'untitled' },
             {
+                onDidChangeCodeLenses: codeLensChangeEmitter.event,
                 provideCodeLenses(): vscode.CodeLens[] {
                     return diffChunks.flatMap((chunk, i) => [
                         new vscode.CodeLens(chunk.range, {
@@ -273,7 +277,7 @@ export function activate(context: vscode.ExtensionContext) {
                 vscode.window.showInformationMessage('Changes applied to file.');
                 FollowAndAuthorRulesProcessor.getInstance().clearDiffDecorations();
                 diffChunks.length = 0;
-                await vscode.commands.executeCommand('editor.action.codeLens.refresh');
+                codeLensChangeEmitter.fire();
             } catch (err: any) {
                 vscode.window.showErrorMessage(`Failed to write file: ${err.message}`);
             }
@@ -293,7 +297,7 @@ export function activate(context: vscode.ExtensionContext) {
             diffChunks.length = 0;
 
             // 3) Refresh your CodeLenses in the diff-view
-            await vscode.commands.executeCommand('editor.action.codeLens.refresh');
+            codeLensChangeEmitter.fire();
 
             FollowAndAuthorRulesProcessor.getInstance().clearDiffDecorations();
             vscode.window.showInformationMessage('File reverted to original content.');

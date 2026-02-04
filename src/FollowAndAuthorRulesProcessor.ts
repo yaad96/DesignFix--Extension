@@ -10,6 +10,7 @@ import { FileChangeManager } from './FileChangeManager';
 import { writeToFile, convertToXML, findFileAndReadContent } from './utilites';
 
 import { diffLines } from 'diff';
+import { codeLensChangeEmitter } from './extension';
 
 export interface DiffChunk {
     range: vscode.Range;
@@ -964,7 +965,7 @@ export class FollowAndAuthorRulesProcessor {
             endOffset: newDocText.length
         });
 
-        await vscode.commands.executeCommand('editor.action.codeLens.refresh');
+        codeLensChangeEmitter.fire();
 
         if (explanation) {
             vscode.window.setStatusBarMessage(`LLM explanation: ${explanation}`, 5000);
