@@ -1,36 +1,102 @@
-# activeDoc Extension for VSCode
+# DesignFix- Extension
 
-This is the README for the "activeDoc" extension for VSCode.
+Official VS Code extension for DesignFix
+## About
 
-## version 0.0.3.vsix state
-- Functionality implemented for "CONVERTED_JAVA_SNIPPET" command
-- Added a debouncer function (delays the firing time of the command "FILE_CHANGE) so that this function is called after a certain interval instead of registering each key stroke
-- Minor bug fixes
-
-## version 0.0.2.vsix state 
-- In the webapp, if the user clicks on a generated LLM snippet, that snippet along with the explanation is now being shown in a new window in the workspace.
-
-## version 0.0.1.vsix state 
-- The search keywords of a vscode workspace is not accessible to the VSCode API users. So, `searchedElements` property is not present in the vscode extension
-- In mac, clicking on a code snippet on the client (web) app is not redirecting the vscode workspace focused file's intended code snippet as it should.
-
-## Features
+DesignFix- Extension is a Java-focused development companion that keeps design constraints actionable inside VS Code. It streams project context in real time, coordinates rule verification, and provides AI-assisted fix review workflows with one-click apply or revert.
 
 
-## Installation
+## Current Functionalities and Capabilities
 
-### Running the Extension Codebase
+### 1) Real-Time Workspace Sync
 
-1. After cloning the repo, open a terminal in the project directory.
-2. Run `npm install` to install the necessary dependencies.
-3. To run the extension in a development environment, press `F5` in VSCode, or click on the "Run and Debug" icon (resembles a beetle under the play icon) on the left sidebar. Then, click on the green play icon to start.
+- Starts a WebSocket server on port `8887` when the extension activates
+- Sends workspace project path and Java-focused project hierarchy to connected client services
+- Converts Java files to XML and streams initial XML snapshots on connection
 
-### Installing the Packaged Extension
+### 2) Continuous Java File Tracking
 
-To install the `.vsix` packaged extension:
+- Watches Java file create, delete, rename, and edit events
+- Re-converts changed Java files to XML and sends update messages automatically
+- Triggers per-file rule checks after XML updates
+- Sends focused Java file updates when active editor changes
+- Uses a debounce strategy (3 seconds) to reduce noisy update traffic during typing
+
+### 3) Rule and Tag Management
+
+- Loads `ruleTable.json` and `tagTable.json` from workspace root
+- Creates missing rule/tag table files automatically
+- Supports new rule and new tag creation
+- Supports existing rule and tag updates
+- Returns success/failure acknowledgements over WebSocket for rule/tag operations
+
+### 4) AI Fix Review and Safe Apply/Revert Workflow
+
+- Receives full-file AI modifications and opens side-by-side comparison views
+- Highlights added/removed diff regions in the editors
+- Shows AI explanation in VS Code status bar
+- Provides inline CodeLens actions:
+  - `Accept Change`: writes reviewed content to target file
+  - `Reject Change`: restores full original file content
+
+### 5) Snippet Workflows
+
+- Opens generated Java snippets in a split editor with explanation comments
+- Locates and highlights converted Java snippet locations in target files
+- Supports request/response flow to fetch file content for edit-fix pipelines
+
+### 6) Design Rule Mining Pipeline
+
+- Command-triggered mining entry point from editor context (`Mine Rules`)
+- Sends selected element metadata (path, offsets, line, token) for mining
+- Captures and sends DOI signals (recent files and caret activity)
+- Receives mining datasets/features/helper files (including append mode for large payloads)
+- Runs SPMF-based mining algorithms and sends mined results back to connected client services
+
+### 7) Code-to-XML Service Support
+
+- Converts incoming code snippets/expressions to XML on demand
+- Returns XML responses with correlation message IDs for client-side matching
+
+## VS Code Commands
+
+- `activedoc.mineRules`: requests design rule mining for selected element
+- `activedoc.acceptChange`: applies AI-reviewed diff content to file
+- `activedoc.rejectChange`: reverts to original file content
+- `activedoc.helloWorld`: basic extension command
+
+Note: command IDs currently use the `activedoc.*` namespace for protocol and backward compatibility.
+
+## Requirements
+
+- VS Code `^1.86.0`
+- Node.js and npm (for development builds)
+- `srcml` installed
+- Java runtime installed (required for mining execution)
+- `spmf.jar` available in workspace root (required for design rule mining runs)
+- A compatible DesignFix client/service connected over WebSocket (`ws://localhost:8887`)
+
+## Run in Development
+
+1. Open this folder in VS Code.
+2. Run `npm install`.
+3. Run `npm run compile` (or `npm run watch`).
+4. Press `F5` to launch the extension host.
+
+## Install Packaged VSIX
 
 1. Open VS Code.
-2. Go to the Extensions view by clicking on the square icon on the sidebar or pressing `Ctrl+Shift+X`.
-3. Click on the "..." menu at the top of the Extensions view and select "Install from VSIX...".
-4. Navigate to the `.vsix` file, select it, and click "Open".
+2. Go to Extensions (`Ctrl+Shift+X`).
+3. Select `...` -> `Install from VSIX...`.
+4. Choose the `.vsix` package file and install.
 
+## Developer Scripts
+
+- `npm run compile`: TypeScript build
+- `npm run watch`: TypeScript watch mode
+- `npm run lint`: ESLint checks
+- `npm run test`: extension test runner
+
+## Maintainer Note
+
+This extension is actively developed by Mainul Hossain as part of the DesignFix toolchain.
