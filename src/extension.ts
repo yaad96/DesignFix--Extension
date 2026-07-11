@@ -25,20 +25,20 @@ let activeWebSocket: WebSocket.WebSocket | null = null;
 
 
 export function activate(context: vscode.ExtensionContext) {
-    console.log('Extension "ActiveDocumentation" is now active.');
+    console.log('Extension "DesignFix" is now active.');
     //console.log("All xml files created");
 
     const server = new WebSocket.Server({ port });
     console.log(`WebSocket server started on port: ${port}`);
 
-    context.subscriptions.push(vscode.commands.registerCommand('activedoc.mineRules', () => {
+    context.subscriptions.push(vscode.commands.registerCommand('designfix.mineRules', () => {
         if (!vscode.workspace.workspaceFolders) {
             vscode.window.showWarningMessage('No workspace is open.');
             return;
         }
 
         if (!activeWebSocket || activeWebSocket.readyState !== WebSocket.OPEN) {
-            vscode.window.showWarningMessage('ActiveDoc client is not connected.');
+            vscode.window.showWarningMessage('DesignFix client is not connected.');
             return;
         }
 
@@ -112,12 +112,12 @@ export function activate(context: vscode.ExtensionContext) {
 
                     /*ws.send(MessageProcessor.encodeData({
                         command: WebSocketConstants.SEND_ENTER_CHAT_MSG,
-                        data: " is connected to ActiveDocumentation",
+                        data: " is connected to DesignFix",
                     }));*/
 
                     ws.send(JSON.stringify({
                         command:WebSocketConstants.SEND_ENTER_CHAT_MSG,
-                        data:"Project is connected to activedoc"
+                        data:"Project is connected to designfix"
                     }));
 
                     /*ws.send(MessageProcessor.encodeData({
@@ -232,8 +232,8 @@ export function activate(context: vscode.ExtensionContext) {
 
 
 
-    context.subscriptions.push(vscode.commands.registerCommand('activedoc.helloWorld', () => {
-        vscode.window.showInformationMessage('Hello World from ActiveDocumentation!');
+    context.subscriptions.push(vscode.commands.registerCommand('designfix.helloWorld', () => {
+        vscode.window.showInformationMessage('Hello World from DesignFix!');
     }));
 
     // CodeLens Accept/Reject integration for diff view
@@ -245,12 +245,12 @@ export function activate(context: vscode.ExtensionContext) {
                 provideCodeLenses(): vscode.CodeLens[] {
                     return diffChunks.flatMap((chunk, i) => [
                         new vscode.CodeLens(chunk.range, {
-                            command: 'activedoc.acceptChange',
+                            command: 'designfix.acceptChange',
                             title: 'Accept Change',
                             arguments: [i]
                         }),
                         new vscode.CodeLens(chunk.range, {
-                            command: 'activedoc.rejectChange',
+                            command: 'designfix.rejectChange',
                             title: 'Reject Change',
                             arguments: [i]
                         })
@@ -260,7 +260,7 @@ export function activate(context: vscode.ExtensionContext) {
         )
     );
     context.subscriptions.push(
-        vscode.commands.registerCommand('activedoc.acceptChange', async (index: number) => {
+        vscode.commands.registerCommand('designfix.acceptChange', async (index: number) => {
             const chunk = diffChunks[index];
             if (!chunk) {
                 vscode.window.showErrorMessage('No such change to accept.');
@@ -284,7 +284,7 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
     context.subscriptions.push(
-        vscode.commands.registerCommand('activedoc.rejectChange', async (index: number) => {
+        vscode.commands.registerCommand('designfix.rejectChange', async (index: number) => {
             const chunk = diffChunks[index];
             if (!chunk) {
                 return vscode.window.showErrorMessage('No such change to reject.');

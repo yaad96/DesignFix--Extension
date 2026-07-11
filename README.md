@@ -60,12 +60,12 @@ DesignFix- Extension is a Java-focused development companion that keeps design c
 
 ## VS Code Commands
 
-- `activedoc.mineRules`: requests design rule mining for selected element
-- `activedoc.acceptChange`: applies AI-reviewed diff content to file
-- `activedoc.rejectChange`: reverts to original file content
-- `activedoc.helloWorld`: basic extension command
+- `designfix.mineRules`: requests design rule mining for selected element
+- `designfix.acceptChange`: applies AI-reviewed diff content to file
+- `designfix.rejectChange`: reverts to original file content
+- `designfix.helloWorld`: basic extension command
 
-Note: command IDs currently use the `activedoc.*` namespace for protocol and backward compatibility.
+Note: command IDs currently use the `designfix.*` namespace for protocol and backward compatibility.
 
 ## Requirements
 

@@ -1,6 +1,6 @@
 {
-  "name": "activedoc",
-  "displayName": "ActiveDoc",
+  "name": "designfix",
+  "displayName": "DesignFix",
   "description": "testing",
   "version": "0.0.3",
   "engines": {
@@ -16,11 +16,11 @@
   "contributes": {
     "commands": [
       {
-        "command": "activedoc.helloWorld",
+        "command": "designfix.helloWorld",
         "title": "Hello World"
       },
       {
-        "command": "activedoc.mineRules",
+        "command": "designfix.mineRules",
         "title": "Mine Rules"
       }
     ],
@@ -28,7 +28,7 @@
       "editor/context": [
         {
           "when": "editorTextFocus",
-          "command": "activedoc.mineRules",
+          "command": "designfix.mineRules",
           "group": "navigation"
         }
       ]

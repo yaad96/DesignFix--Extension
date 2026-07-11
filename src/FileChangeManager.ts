@@ -260,8 +260,14 @@ export class FileChangeManager {
 
     private convertToXML(inputFilePath: string): Promise<string> {
         return new Promise<string>((resolve, reject) => {
-            // Adjust the command to output XML to stdout
-            const command = `srcml "${inputFilePath}"`;
+            // pick the right srcml executable based on platform
+            const bin = process.platform === 'win32'
+                ? Constants.SRCML_PATH_WINDOWS
+                : process.platform === 'darwin'
+                    ? Constants.SRCML_PATH_MAC
+                    : Constants.SRCML_PATH_LINUX;
+            // Adjust the command to output XML to stdout (quote both binary and path)
+            const command = `"${bin}" "${inputFilePath}"`;
             exec(command, (error, stdout, stderr) => {
                 if (error) {
                     console.error(`Error executing srcML for file ${inputFilePath}:`, error);
