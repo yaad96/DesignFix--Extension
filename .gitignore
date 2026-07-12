@@ -7,3 +7,9 @@ node_modules
 .claude/settings.local.json
 tsconfig.json
 first-extension/
+
+# DesignFix agentic-comparison logs (sibling folders; ignored defensively)
+/data
+../data
+/cline_data
+../cline_data

@@ -901,11 +901,104 @@ export class FollowAndAuthorRulesProcessor {
         this.originalDiffEditor = originalEditor;
     }
 
+    /**
+     * Persist a fix-attempt record under <workspace-root>/data/rule_<id>/run_<NN>/.
+     * The `data` folder sits alongside the DesignFix-Extension and DesignFix-client
+     * folders and is git-ignored. Each run captures everything we know about the
+     * attempt: metadata, token usage, prompts, raw responses, the list of files
+     * the LLM inspected, and the original/modified content of every edited file.
+     */
+    private async writeFixLog(log: any): Promise<void> {
+        // <root>/DesignFix-Extension/out -> up two levels -> workspace root.
+        const dataRoot = path.join(__dirname, '..', '..', 'data');
+
+        const sanitize = (s: string) => String(s).replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'unknown';
+        const ruleId = sanitize(log.ruleId !== undefined && log.ruleId !== null ? log.ruleId : 'unknown');
+        const ruleDir = path.join(dataRoot, `rule_${ruleId}`);
+
+        await fs.mkdir(ruleDir, { recursive: true });
+
+        // Next run number: scan existing run_NN folders and increment.
+        let nextRun = 1;
+        try {
+            const entries = await fs.readdir(ruleDir, { withFileTypes: true });
+            const runNums = entries
+                .filter(e => e.isDirectory() && /^run_\d+$/.test(e.name))
+                .map(e => parseInt(e.name.slice(4), 10))
+                .filter(n => !isNaN(n));
+            if (runNums.length > 0) {
+                nextRun = Math.max(...runNums) + 1;
+            }
+        } catch { /* ruleDir just created / empty */ }
+
+        const runDir = path.join(ruleDir, `run_${String(nextRun).padStart(2, '0')}`);
+        await fs.mkdir(runDir, { recursive: true });
+
+        const inspectedFiles: any[] = Array.isArray(log.inspectedFiles) ? log.inspectedFiles : [];
+        const editedFiles: any[] = Array.isArray(log.editedFiles) ? log.editedFiles : [];
+
+        // meta.json: everything except the bulky file bodies and prompts.
+        const meta = {
+            ruleId: log.ruleId,
+            ruleTitle: log.ruleTitle ?? '',
+            createdAt: log.createdAt ?? new Date().toISOString(),
+            model: log.model ?? '',
+            violationFilePath: log.violationFilePath ?? '',
+            exampleFilePath: log.exampleFilePath ?? '',
+            tokenUsage: log.tokenUsage ?? null,
+            inspectedFiles: inspectedFiles.map(f => ({ filePath: f.filePath, reason: f.reason ?? '' })),
+            editedFiles: editedFiles.map(f => ({ filePath: f.filePath })),
+            explanation: log.explanation ?? '',
+        };
+        await fs.writeFile(path.join(runDir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
+
+        // Prompts and raw model responses.
+        if (log.prompts) {
+            if (log.prompts.A) { await fs.writeFile(path.join(runDir, 'prompt_A.txt'), String(log.prompts.A), 'utf8'); }
+            if (log.prompts.B) { await fs.writeFile(path.join(runDir, 'prompt_B.txt'), String(log.prompts.B), 'utf8'); }
+        }
+        if (log.responses) {
+            if (log.responses.A) { await fs.writeFile(path.join(runDir, 'response_A.txt'), String(log.responses.A), 'utf8'); }
+            if (log.responses.B) { await fs.writeFile(path.join(runDir, 'response_B.json'), String(log.responses.B), 'utf8'); }
+        }
+
+        // Original + modified content of every edited file, in a subfolder.
+        if (editedFiles.length > 0) {
+            const editsDir = path.join(runDir, 'edited_files');
+            await fs.mkdir(editsDir, { recursive: true });
+            let idx = 0;
+            for (const f of editedFiles) {
+                idx++;
+                const base = sanitize(path.basename(f.filePath || `file_${idx}`));
+                const stem = `${String(idx).padStart(2, '0')}_${base}`;
+                if (typeof f.originalFileContent === 'string') {
+                    await fs.writeFile(path.join(editsDir, `${stem}.original`), f.originalFileContent, 'utf8');
+                }
+                if (typeof f.modifiedFileContent === 'string') {
+                    await fs.writeFile(path.join(editsDir, `${stem}.modified`), f.modifiedFileContent, 'utf8');
+                }
+            }
+        }
+
+        console.log(`DesignFix fix log written: ${runDir}`);
+        vscode.window.setStatusBarMessage(`DesignFix: logged fix to data/rule_${ruleId}/run_${String(nextRun).padStart(2, '0')}`, 4000);
+    }
+
     private async handleLlmModifiedFileContent(jsonData: any): Promise<void> {
         const data = jsonData?.data;
         if (!data) {
             console.error('LLM modified file content missing data payload.');
             return;
+        }
+
+        // Persist a full record of this fix attempt (files inspected/edited,
+        // prompts, responses, token usage) for the agentic-comparison dataset.
+        if (data.log) {
+            try {
+                await this.writeFixLog(data.log);
+            } catch (err) {
+                console.error('Failed to write DesignFix fix log:', err);
+            }
         }
 
         // Multi-file fix: the LLM changed two or more files (e.g. a cross-file
