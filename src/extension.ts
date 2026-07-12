@@ -94,9 +94,11 @@ export function activate(context: vscode.ExtensionContext) {
         }));
     }));
 
-    if (vscode.workspace.workspaceFolders) {
-
-        server.on('connection', (ws) => {
+    // Register the connection handler unconditionally so the tool works whether
+    // the target folder was opened via "Open Folder" or "Add Folder to
+    // Workspace" - even if no folder was open when the extension activated
+    // (onStartupFinished). The folder is resolved per-connection below.
+    server.on('connection', (ws) => {
             activeWebSocket = ws;
 
             console.log('Client connected');
@@ -184,6 +186,10 @@ export function activate(context: vscode.ExtensionContext) {
 
                 } else {
                     console.log("No workspace found");
+                    vscode.window.showWarningMessage(
+                        'DesignFix: no folder is open. Use "Open Folder" (or "Add Folder to Workspace"), ' +
+                        'then reload the DesignFix client to analyze it.'
+                    );
                 }
             })().catch(error => console.error('Error in WebSocket connection handler:', error));
 
@@ -226,7 +232,6 @@ export function activate(context: vscode.ExtensionContext) {
                 }
             });
         });
-    }
 
 
 
@@ -242,8 +247,14 @@ export function activate(context: vscode.ExtensionContext) {
             { language: 'java', scheme: 'untitled' },
             {
                 onDidChangeCodeLenses: codeLensChangeEmitter.event,
-                provideCodeLenses(): vscode.CodeLens[] {
-                    return diffChunks.flatMap((chunk, i) => [
+                provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
+                    // Only show a chunk's lenses on the diff tab it belongs to.
+                    // (Legacy chunks without modifiedUri show on any untitled java doc.)
+                    return diffChunks.flatMap((chunk, i) => {
+                        if (chunk.modifiedUri && chunk.modifiedUri !== document.uri.toString()) {
+                            return [];
+                        }
+                        return [
                         new vscode.CodeLens(chunk.range, {
                             command: 'designfix.acceptChange',
                             title: 'Accept Change',
@@ -254,7 +265,8 @@ export function activate(context: vscode.ExtensionContext) {
                             title: 'Reject Change',
                             arguments: [i]
                         })
-                    ]);
+                    ];
+                    });
                 }
             }
         )
@@ -266,17 +278,19 @@ export function activate(context: vscode.ExtensionContext) {
                 vscode.window.showErrorMessage('No such change to accept.');
                 return;
             }
-            const editor = vscode.window.activeTextEditor;
-            if (!editor) {
-                vscode.window.showErrorMessage('No active editor.');
-                return;
-            }
-            const content = editor.document.getText();
+            // Prefer the edited content from this chunk's own diff tab, so
+            // accepting one file in a multi-file fix writes the right content.
+            const chunkEditor = chunk.modifiedUri
+                ? vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === chunk.modifiedUri)
+                : vscode.window.activeTextEditor;
+            const content = chunkEditor ? chunkEditor.document.getText() : chunk.newText;
             try {
                 await fs.promises.writeFile(chunk.filePath, content, 'utf8');
-                vscode.window.showInformationMessage('Changes applied to file.');
-                FollowAndAuthorRulesProcessor.getInstance().clearDiffDecorations();
-                diffChunks.length = 0;
+                vscode.window.showInformationMessage(`Changes applied to ${chunk.filePath.split(/[\\/]/).pop()}.`);
+                diffChunks.splice(index, 1);
+                if (diffChunks.length === 0) {
+                    FollowAndAuthorRulesProcessor.getInstance().clearDiffDecorations();
+                }
                 codeLensChangeEmitter.fire();
             } catch (err: any) {
                 vscode.window.showErrorMessage(`Failed to write file: ${err.message}`);
@@ -290,17 +304,15 @@ export function activate(context: vscode.ExtensionContext) {
                 return vscode.window.showErrorMessage('No such change to reject.');
             }
 
-            // 1) Overwrite the entire file with the saved original content
-            await fs.promises.writeFile(chunk.filePath, chunk.fullOriginalContent, 'utf8');
+            // Nothing was written to disk for this file yet (the diff is a
+            // preview), so just discard this file's change from the review set.
+            diffChunks.splice(index, 1);
 
-            // 2) Clear out all remaining diffs
-            diffChunks.length = 0;
-
-            // 3) Refresh your CodeLenses in the diff-view
+            if (diffChunks.length === 0) {
+                FollowAndAuthorRulesProcessor.getInstance().clearDiffDecorations();
+            }
             codeLensChangeEmitter.fire();
-
-            FollowAndAuthorRulesProcessor.getInstance().clearDiffDecorations();
-            vscode.window.showInformationMessage('File reverted to original content.');
+            vscode.window.showInformationMessage(`Rejected change to ${chunk.filePath.split(/[\\/]/).pop()}.`);
         })
     );
 

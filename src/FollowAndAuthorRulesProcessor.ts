@@ -20,6 +20,10 @@ export interface DiffChunk {
     fullOriginalContent: string;
     startOffset: number;
     endOffset: number;
+    // URI (as string) of the untitled modified document this chunk belongs to.
+    // Used to scope the Accept/Reject CodeLenses to the correct diff tab when a
+    // multi-file fix opens several diff views at once.
+    modifiedUri?: string;
 }
 export const diffChunks: DiffChunk[] = [];
 
@@ -971,7 +975,8 @@ export class FollowAndAuthorRulesProcessor {
             fullOriginalContent: fileContent,
             filePath: targetPath,
             startOffset: 0,
-            endOffset: newDocText.length
+            endOffset: newDocText.length,
+            modifiedUri: newDoc.uri.toString()
         });
 
         codeLensChangeEmitter.fire();
@@ -1006,33 +1011,89 @@ export class FollowAndAuthorRulesProcessor {
             return;
         }
 
-        const fileList = resolved.map(r => path.basename(r.path)).join(', ');
-        const choice = await vscode.window.showInformationMessage(
-            `DesignFix will apply a fix across ${resolved.length} files: ${fileList}`,
-            { modal: true },
-            'Apply'
-        );
-        if (choice !== 'Apply') {
-            vscode.window.showInformationMessage('DesignFix fix cancelled.');
-            return;
-        }
+        // Show the same review UX as single-file fixes, but one diff per changed
+        // file: original on the left, modified (untitled) on the right, each with
+        // its own Accept Change / Reject Change CodeLenses. Nothing is written to
+        // disk until the user accepts an individual file.
+        this.clearDiffDecorationsInternal();
+        diffChunks.length = 0;
 
-        let applied = 0;
+        let opened = 0;
+        const alreadySatisfied: string[] = [];
         for (const r of resolved) {
+            let originalContent = '';
+            let originalDoc: vscode.TextDocument | null = null;
             try {
-                await fs.writeFile(r.path, r.content, { encoding: 'utf8' });
-                applied++;
-            } catch (err: any) {
-                console.error(`Failed to write ${r.path}:`, err);
-                vscode.window.showErrorMessage(`Failed to write ${path.basename(r.path)}: ${err.message}`);
+                originalContent = await fs.readFile(r.path, { encoding: 'utf8' });
+                originalDoc = await vscode.workspace.openTextDocument(r.path);
+            } catch (err) {
+                // File does not exist yet (fix creates a new file): no original pane.
+                console.warn(`No existing file for ${r.path}; showing modified content only.`);
             }
+
+            // If the file on disk already matches the LLM's proposed content, there
+            // is nothing to review (e.g. the fix was applied on a previous run).
+            // Skip it so we don't open an empty, un-highlighted diff.
+            if (originalDoc && this.normalizeNewlines(originalContent) === this.normalizeNewlines(r.content)) {
+                alreadySatisfied.push(path.basename(r.path));
+                continue;
+            }
+
+            let originalEditor: vscode.TextEditor | undefined;
+            if (originalDoc) {
+                originalEditor = await vscode.window.showTextDocument(originalDoc, { viewColumn: vscode.ViewColumn.One, preview: false });
+            }
+
+            const lineEnding = originalContent.includes('\r\n') ? '\r\n' : '\n';
+            const newDoc = await vscode.workspace.openTextDocument({
+                language: (originalDoc && originalDoc.languageId) || 'java',
+                content: r.content
+            });
+            const newEditor = await vscode.window.showTextDocument(newDoc, { viewColumn: vscode.ViewColumn.Two, preview: false });
+
+            if (originalEditor) {
+                this.applyDiffHighlights(
+                    originalEditor,
+                    newEditor,
+                    this.normalizeNewlines(originalContent),
+                    this.normalizeNewlines(r.content),
+                    lineEnding
+                );
+            }
+
+            const newDocText = newDoc.getText();
+            diffChunks.push({
+                range: new vscode.Range(newDoc.positionAt(0), newDoc.positionAt(0)),
+                newText: newDocText,
+                originalText: originalContent,
+                fullOriginalContent: originalContent,
+                filePath: r.path,
+                startOffset: 0,
+                endOffset: newDocText.length,
+                modifiedUri: newDoc.uri.toString()
+            });
+            opened++;
         }
 
-        if (applied > 0) {
-            vscode.window.showInformationMessage(`DesignFix applied changes to ${applied} file(s).`);
+        codeLensChangeEmitter.fire();
+
+        if (opened > 0) {
+            vscode.window.showInformationMessage(
+                `DesignFix suggested a fix across ${opened} file(s). Review each tab and Accept or Reject Change.`
+            );
             if (explanation) {
                 vscode.window.setStatusBarMessage(`LLM explanation: ${explanation}`, 5000);
             }
+        }
+
+        if (alreadySatisfied.length > 0) {
+            vscode.window.showWarningMessage(
+                `DesignFix: ${alreadySatisfied.length} file(s) already match the suggested fix on disk (nothing to apply): ${alreadySatisfied.join(', ')}.`
+            );
+        }
+
+        if (opened === 0 && alreadySatisfied.length === 0) {
+            vscode.window.showErrorMessage('DesignFix: no reviewable file edits were produced.');
         }
     }
 }

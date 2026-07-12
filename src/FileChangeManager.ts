@@ -326,18 +326,24 @@ export class FileChangeManager {
 
 
     public async convertAllJavaFilesToXML(projectPath: string) {
-        this.xmlFiles = [];
+        // Build into a local array and swap it in atomically at the end. This
+        // prevents a concurrent reader (e.g. a racing client reconnect calling
+        // sendXmlFilesSequentially) from ever observing a half-populated set,
+        // which would make the client check rules against partial data.
+        const collected: { filePath: string; xmlContent: string }[] = [];
         const javaFiles = await vscode.workspace.findFiles(new vscode.RelativePattern(projectPath, '**/*.java'));
         for (const file of javaFiles) {
             const inputFilePath = file.fsPath;
+            if (this.isIgnoredJavaFile(inputFilePath)) { continue; } // skip our own temp files
             try {
                 // Directly receive XML content from the conversion function
                 const xmlContent = await this.convertToXML(inputFilePath);
-                this.xmlFiles.push({ filePath: inputFilePath, xmlContent });
+                collected.push({ filePath: inputFilePath, xmlContent });
             } catch (error) {
                 console.error(`Error converting ${inputFilePath} to XML:`, error);
             }
         }
+        this.xmlFiles = collected;
         console.log("final number of xmlfiles: ",this.xmlFiles.length);
     }
 
