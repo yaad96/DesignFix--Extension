@@ -47,9 +47,14 @@ export class FileChangeManager {
     }
 
     private updateConnection(projectPath: string, ws: WebSocket): void {
+        const projectChanged = this.projectPath !== projectPath;
         this.projectPath = projectPath;
         this.ws = ws;
         this.syncCollaborators();
+        // Re-scope the on-disk watcher if the project path changed on reconnect.
+        if (projectChanged) {
+            this.watchJavaFilesOnDisk();
+        }
     }
 
     /*public void checkChangedProject(){
@@ -67,6 +72,11 @@ export class FileChangeManager {
 
     private debouncedHandleChangeTextDocument: (event: vscode.TextDocumentChangeEvent) => void;
 
+    // Filesystem watcher so on-disk edits made outside this editor
+    // (other VS Code windows, git, formatters, external tools) are reflected instantly.
+    private javaFileWatcher: vscode.FileSystemWatcher | null = null;
+    private diskChangeTimers: Map<string, NodeJS.Timeout> = new Map();
+
 
     private watchWorkspaceChanges() {
 
@@ -76,7 +86,80 @@ export class FileChangeManager {
         vscode.workspace.onDidCreateFiles(this.handleCreateFile.bind(this));
         vscode.workspace.onDidDeleteFiles(this.handleDeleteFile.bind(this));
         vscode.workspace.onDidRenameFiles(this.handleRenameFile.bind(this));
+
+        this.watchJavaFilesOnDisk();
         // You can add more event listeners as needed
+    }
+
+    // Watches every *.java file on disk under the project. Unlike the
+    // vscode.workspace.onDidChange*/onDidCreate*/onDidDelete* events (which only
+    // fire for changes performed inside this editor), a FileSystemWatcher fires
+    // for changes from ANY source, giving instant reflection in the web app.
+    private watchJavaFilesOnDisk() {
+        // Dispose any previous watcher (e.g. on reconnect with a new project path).
+        if (this.javaFileWatcher) {
+            this.javaFileWatcher.dispose();
+            this.javaFileWatcher = null;
+        }
+        if (!this.projectPath) { return; }
+
+        const pattern = new vscode.RelativePattern(this.projectPath, '**/*.java');
+        this.javaFileWatcher = vscode.workspace.createFileSystemWatcher(pattern);
+
+        this.javaFileWatcher.onDidChange(uri => this.debouncedHandleDiskChange(uri.fsPath));
+        this.javaFileWatcher.onDidCreate(uri => this.debouncedHandleDiskChange(uri.fsPath, true));
+        this.javaFileWatcher.onDidDelete(uri => this.handleDiskDelete(uri.fsPath));
+    }
+
+    // The extension itself writes temporary *.java files into the project during
+    // rule authoring / expression evaluation (e.g. Constants.TEMP_JAVA_FILE).
+    // These must be ignored by the disk watcher, otherwise it would push bogus
+    // XML to the client and error when the temp file is deleted mid-debounce.
+    private isIgnoredJavaFile(javaFilePath: string): boolean {
+        const base = javaFilePath.replace(/\\/g, '/').split('/').pop() || '';
+        return base === Constants.TEMP_JAVA_FILE || base === Constants.TEMP_JAVA_FILE_TESTING;
+    }
+
+    // Debounce per-file so a burst of writes triggers a single reconvert.
+    private debouncedHandleDiskChange(javaFilePath: string, isCreate = false) {
+        if (this.isIgnoredJavaFile(javaFilePath)) { return; }
+        const existing = this.diskChangeTimers.get(javaFilePath);
+        if (existing) { clearTimeout(existing); }
+        const timer = setTimeout(() => {
+            this.diskChangeTimers.delete(javaFilePath);
+            this.reconvertAndPushFile(javaFilePath, isCreate).catch(err =>
+                console.error(`Error handling disk change for ${javaFilePath}:`, err));
+        }, Constants.DEBOUNCER_DELAY);
+        this.diskChangeTimers.set(javaFilePath, timer);
+    }
+
+    // Reconvert a single changed/created file and push the updated XML + a
+    // targeted rule re-check to the client (fast path, no full reconvert).
+    private async reconvertAndPushFile(javaFilePath: string, isCreate: boolean) {
+        if (!this.ws) { return; }
+        const xmlContent = await this.convertToXML(javaFilePath);
+        const existingIndex = this.xmlFiles.findIndex(f => f.filePath === javaFilePath);
+        if (existingIndex !== -1) {
+            this.xmlFiles[existingIndex].xmlContent = xmlContent;
+        } else {
+            this.xmlFiles.push({ filePath: javaFilePath, xmlContent });
+        }
+        this.sendUpdatedXMLFile(javaFilePath.replace(/\\/g, '/'), xmlContent, WebSocketConstants.SEND_UPDATE_XML_FILE_MSG);
+        if (isCreate) {
+            this.updateProjectHierarchy();
+        }
+    }
+
+    private handleDiskDelete(javaFilePath: string) {
+        if (this.isIgnoredJavaFile(javaFilePath)) { return; }
+        const existing = this.diskChangeTimers.get(javaFilePath);
+        if (existing) { clearTimeout(existing); this.diskChangeTimers.delete(javaFilePath); }
+        const index = this.xmlFiles.findIndex(x => x.filePath === javaFilePath);
+        if (index !== -1) {
+            this.xmlFiles.splice(index, 1);
+        }
+        this.sendUpdatedXMLFile(javaFilePath.replace(/\\/g, '/'), "", WebSocketConstants.SEND_UPDATE_XML_FILE_MSG);
+        this.updateProjectHierarchy();
     }
 
     private sendUpdatedXMLFile(javaFilePath:string,xmlContent:String,command:string){

@@ -904,6 +904,15 @@ export class FollowAndAuthorRulesProcessor {
             return;
         }
 
+        // Multi-file fix: the LLM changed two or more files (e.g. a cross-file
+        // rule whose fix touches both the violation file and a registry file).
+        // Apply each edit directly; the FileSystemWatcher then reconverts and
+        // re-checks automatically, updating the web app.
+        if (Array.isArray(data.edits) && data.edits.length >= 2) {
+            await this.applyMultiFileEdits(data.edits, data.explanation);
+            return;
+        }
+
         let targetPath: string | undefined = data.filePath || data.fileToChange;
         if (!targetPath) {
             vscode.window.showErrorMessage('Unable to apply fix: no target file path provided.');
@@ -972,4 +981,58 @@ export class FollowAndAuthorRulesProcessor {
         }
     }
 
+    /**
+     * Apply a set of LLM file edits (multi-file cross-file fix). Each edit is
+     * written to disk directly after an optional confirmation; the workspace
+     * FileSystemWatcher then reconverts and re-checks the affected files.
+     */
+    private async applyMultiFileEdits(edits: any[], explanation?: string): Promise<void> {
+        const resolved: { path: string; content: string }[] = [];
+        for (const edit of edits) {
+            let p: string | undefined = edit?.filePath || edit?.fileToChange;
+            const content: string = edit?.modifiedFileContent ?? edit?.code ?? '';
+            if (!p || !content.trim()) {
+                console.warn('Skipping edit with missing path or content:', edit);
+                continue;
+            }
+            if (!path.isAbsolute(p)) {
+                p = path.join(this.currentProjectPath, p);
+            }
+            resolved.push({ path: p, content });
+        }
+
+        if (resolved.length === 0) {
+            vscode.window.showErrorMessage('LLM fix contained no applicable file edits.');
+            return;
+        }
+
+        const fileList = resolved.map(r => path.basename(r.path)).join(', ');
+        const choice = await vscode.window.showInformationMessage(
+            `DesignFix will apply a fix across ${resolved.length} files: ${fileList}`,
+            { modal: true },
+            'Apply'
+        );
+        if (choice !== 'Apply') {
+            vscode.window.showInformationMessage('DesignFix fix cancelled.');
+            return;
+        }
+
+        let applied = 0;
+        for (const r of resolved) {
+            try {
+                await fs.writeFile(r.path, r.content, { encoding: 'utf8' });
+                applied++;
+            } catch (err: any) {
+                console.error(`Failed to write ${r.path}:`, err);
+                vscode.window.showErrorMessage(`Failed to write ${path.basename(r.path)}: ${err.message}`);
+            }
+        }
+
+        if (applied > 0) {
+            vscode.window.showInformationMessage(`DesignFix applied changes to ${applied} file(s).`);
+            if (explanation) {
+                vscode.window.setStatusBarMessage(`LLM explanation: ${explanation}`, 5000);
+            }
+        }
+    }
 }
